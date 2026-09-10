@@ -85,11 +85,22 @@ if [[ "${SKIP_DOTNET:-0}" != "1" ]]; then
     --install-dir "$DOTNET_DIR"
   rm -f /tmp/dotnet-install.sh
   ln -sf "$DOTNET_DIR/dotnet" "$BIN_DIR/dotnet"
+  # Pin to the runtime we just installed, not whatever is first on PATH
+  DOTNET_BIN="$DOTNET_DIR/dotnet"
+else
+  DOTNET_BIN="$(command -v dotnet || true)"
+  [[ -n "$DOTNET_BIN" ]] || die "SKIP_DOTNET=1 but dotnet not found on PATH."
 fi
 
-DOTNET_BIN="$(command -v dotnet || true)"
-[[ -n "$DOTNET_BIN" ]] || die "dotnet not found on PATH."
-log ".NET runtime: $("$DOTNET_BIN" --list-runtimes | head -n1)"
+DOTNET_ROOT_DIR="$(dirname "$(readlink -f "$DOTNET_BIN")")"
+
+# The net${NET_VERSION} tool builds require that major runtime version
+if ! "$DOTNET_BIN" --list-runtimes 2>/dev/null \
+    | grep -q "Microsoft.NETCore.App ${NET_VERSION}\."; then
+  die "dotnet at ${DOTNET_BIN} does not have the .NET ${NET_VERSION} runtime. \
+Re-run without SKIP_DOTNET, or install .NET ${NET_VERSION} first."
+fi
+log ".NET runtime: $("$DOTNET_BIN" --list-runtimes | grep "Microsoft.NETCore.App ${NET_VERSION}\." | head -n1)"
 
 # --- EZ Tools ---------------------------------------------------------------
 mkdir -p "$INSTALL_DIR"
@@ -117,6 +128,7 @@ for tool in "${TOOLS[@]}"; do
   name="$(printf '%s' "$tool" | tr '[:upper:]' '[:lower:]')"
   cat > "${BIN_DIR}/${name}" <<EOF
 #!/usr/bin/env bash
+export DOTNET_ROOT="${DOTNET_ROOT_DIR}"
 exec "${DOTNET_BIN}" "${dll}" "\$@"
 EOF
   chmod +x "${BIN_DIR}/${name}"
