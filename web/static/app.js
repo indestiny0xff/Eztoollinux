@@ -57,6 +57,10 @@ function selectTool(tool) {
   state.files = [];
   state.serverPath = null;
   state.format = tool.outputs[0];
+  state.helpLoaded = false;
+  $("help-summary").textContent = "Command-line help for " + tool.name + " (all options)";
+  $("help-text").textContent = "Loading...";
+  if ($("help-details").open) loadHelp();
   $("tool-name").textContent = tool.name;
   $("tool-desc").textContent = tool.desc;
   $("drop-hint").textContent = "expected: " + tool.hint;
@@ -366,5 +370,17 @@ async function loadTable() {
   $("pg-prev").disabled = state.offset === 0;
   $("pg-next").disabled = to >= data.filtered;
 }
+
+/* ---------- per-tool CLI help ---------- */
+async function loadHelp() {
+  if (state.helpLoaded) return;
+  state.helpLoaded = true;
+  const tool = state.tool;
+  const data = await (await fetch("/api/tools/" + tool.id + "/help")).json();
+  if (state.tool === tool) $("help-text").textContent = data.help || "No help output.";
+}
+$("help-details").addEventListener("toggle", () => {
+  if ($("help-details").open) loadHelp();
+});
 
 loadTools();

@@ -64,6 +64,7 @@ Features:
 - Live preview of the exact command that will run
 - CSV and JSON results as a paginated table with full-text search, match highlighting, and column sorting (handled server side, so large outputs stay fast)
 - Raw file downloads and the full tool log for every run
+- Built-in command-line help viewer per tool, for checking every available option
 
 To reach it from another machine on your network, add a line like `192.168.1.x eztoollinux.lan` to that machine's hosts file, or just use the server's IP.
 

@@ -89,6 +89,7 @@ TOOLS_BY_ID = {t["id"]: t for t in TOOLS}
 JOBS = {}        # id -> job dict
 JOBS_LOCK = threading.Lock()
 TABLE_CACHE = {} # path -> (mtime, headers, rows, truncated)
+HELP_CACHE = {}  # tool id -> --help output
 
 
 def sanitize_name(name):
@@ -157,6 +158,20 @@ def index():
 def api_tools():
     return jsonify([{k: t[k] for k in ("id", "name", "desc", "input", "hint", "outputs")}
                     for t in TOOLS])
+
+
+@app.get("/api/tools/<tool_id>/help")
+def api_tool_help(tool_id):
+    tool = TOOLS_BY_ID.get(tool_id) or abort(404)
+    if tool_id not in HELP_CACHE:
+        try:
+            proc = subprocess.run(
+                [tool["cmd"], "--help"], timeout=60,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+            HELP_CACHE[tool_id] = proc.stdout[:STDOUT_CAP]
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"help": "Could not load help: " + str(exc)})
+    return jsonify({"help": HELP_CACHE[tool_id]})
 
 
 @app.get("/api/browse")

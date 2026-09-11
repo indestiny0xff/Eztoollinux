@@ -347,6 +347,9 @@ tbody mark { background: var(--accent); color: #191204; border-radius: 2px; padd
   word-break: break-all;
 }
 
+.help-box { margin-top: 0; }
+.help-box pre { color: var(--text); max-height: 60vh; }
+
 button:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
