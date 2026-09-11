@@ -4,7 +4,8 @@ Installers for running Eric Zimmerman's EZ Tools (forensic CLI suite) natively o
 
 ## Layout
 - `install-eztools.sh` - bash installer: installs the .NET runtime, downloads the net9 builds of all CLI tools to `/opt/eztools`, and creates lowercase wrapper commands in `/usr/local/bin` (e.g. `mftecmd`). Configurable via env vars (`DOTNET_CHANNEL`, `NET_VERSION`, `INSTALL_DIR`, `SKIP_DOTNET`).
-- `Dockerfile` - builds on `mcr.microsoft.com/dotnet/runtime:9.0` and reuses `install-eztools.sh` with `SKIP_DOTNET=1`.
+- `Dockerfile` - CLI image on `mcr.microsoft.com/dotnet/runtime:9.0`, reuses `install-eztools.sh` with `SKIP_DOTNET=1`.
+- `web/` - web UI image (separate feature, keep the CLI image intact): Flask backend (`app.py`) with a job runner and server-side table API (search/sort/pagination for CSV/JSONL outputs), vanilla JS frontend in `static/`, `web/Dockerfile` built from repo root context. `docker-compose.yml` binds 80:8080 so http://eztoollinux.localhost works; `./data` mounts to `/data` for the in-page evidence browser.
 
 ## Conventions
 - Tool zips come from `https://download.ericzimmermanstools.com/net<version>/<Tool>.zip`; archive layouts and dll casing vary, so the script locates dlls with `find -iname`.

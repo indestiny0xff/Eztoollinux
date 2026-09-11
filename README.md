@@ -47,6 +47,28 @@ Or start an interactive shell:
 docker run --rm -it -v "$(pwd):/data" eztools
 ```
 
+## Option 3: Web UI
+
+A browser front end for the whole suite: pick a tool, upload evidence or browse a mounted folder, keep the default arguments or add your own, and the CSV/JSON output is rendered as a searchable, sortable table directly in the page.
+
+```bash
+docker compose up -d --build
+```
+
+Then open http://eztoollinux.localhost - browsers resolve any `*.localhost` name to 127.0.0.1, and compose binds port 80, so the short address works with no DNS or hosts-file setup. (If port 80 is taken, change the mapping in `docker-compose.yml` and use http://eztoollinux.localhost:8080.)
+
+Evidence placed in the `./data` folder next to `docker-compose.yml` appears under "Browse /data" in the page, which avoids uploading large files like an $MFT. Uploads work too (up to 8 GB).
+
+Features:
+- All 17 CLI tools, each with its expected input and supported output formats
+- Live preview of the exact command that will run
+- CSV and JSON results as a paginated table with full-text search, match highlighting, and column sorting (handled server side, so large outputs stay fast)
+- Raw file downloads and the full tool log for every run
+
+To reach it from another machine on your network, add a line like `192.168.1.x eztoollinux.lan` to that machine's hosts file, or just use the server's IP.
+
+Without compose: `docker build -f web/Dockerfile -t eztools-web .` then `docker run -d -p 80:8080 -v /path/to/evidence:/data eztools-web`.
+
 ## Usage examples
 
 ```bash

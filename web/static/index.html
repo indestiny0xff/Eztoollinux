@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eztoollinux</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%2310141c'/><text x='2' y='12' font-family='monospace' font-size='11' fill='%23f2a33c'>$</text></svg>">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="brand"><span class="brand-dollar">$</span>EZTOOLLINUX</div>
+  <div class="brand-sub">Eric Zimmerman's tools, in your browser</div>
+  <input id="tool-filter" class="tool-filter" type="search" placeholder="Filter tools..." autocomplete="off">
+  <nav id="tool-list" class="tool-list"></nav>
+  <div class="sidebar-foot">
+    <a href="https://ericzimmerman.github.io" target="_blank" rel="noopener">tool docs</a>
+  </div>
+</aside>
+
+<main class="main">
+  <header class="tool-head">
+    <h1 id="tool-name">Loading...</h1>
+    <p id="tool-desc"></p>
+  </header>
+
+  <section class="card">
+    <div class="card-label">Evidence</div>
+    <div class="seg" id="input-mode">
+      <button class="seg-btn active" data-mode="upload">Upload</button>
+      <button class="seg-btn" data-mode="server">Browse /data</button>
+    </div>
+    <div id="upload-pane">
+      <label id="drop-zone" class="drop-zone">
+        <input id="file-input" type="file" hidden>
+        <span id="drop-text">Drop files here or click to choose</span>
+        <span id="drop-hint" class="drop-hint"></span>
+      </label>
+      <ul id="file-chips" class="file-chips"></ul>
+    </div>
+    <div id="server-pane" hidden>
+      <div class="browse-bar">
+        <span class="browse-path" id="browse-path">/data</span>
+        <button id="browse-up" class="mini-btn" type="button">up</button>
+      </div>
+      <ul id="browse-list" class="browse-list"></ul>
+      <div id="server-pick" class="server-pick" hidden></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-label">Options</div>
+    <div class="opt-row">
+      <div class="opt">
+        <span class="opt-name">Output</span>
+        <div class="seg" id="format-seg"></div>
+      </div>
+      <div class="opt opt-grow">
+        <span class="opt-name">Extra arguments <em>(optional, appended to the command)</em></span>
+        <input id="args-input" class="args-input" type="text" placeholder="e.g. --dt yyyy-MM-dd" autocomplete="off" spellcheck="false">
+      </div>
+    </div>
+    <div class="cmd-preview" id="cmd-preview"></div>
+    <button id="run-btn" class="run-btn" type="button" disabled>Run</button>
+  </section>
+
+  <section class="card" id="results-card" hidden>
+    <div class="card-label">Results</div>
+    <div class="status-line">
+      <span id="status-dot" class="dot"></span>
+      <span id="status-text"></span>
+    </div>
+    <div id="out-files" class="out-files"></div>
+
+    <div id="viewer" class="viewer" hidden>
+      <div class="viewer-bar">
+        <input id="table-q" class="table-q" type="search" placeholder="Search all columns..." autocomplete="off">
+        <span id="table-count" class="table-count"></span>
+        <span class="pager">
+          <button id="pg-prev" class="mini-btn" type="button">prev</button>
+          <span id="pg-label"></span>
+          <button id="pg-next" class="mini-btn" type="button">next</button>
+        </span>
+        <a id="dl-link" class="mini-btn" download>download</a>
+      </div>
+      <div class="table-wrap" id="table-wrap"></div>
+      <pre id="text-view" class="text-view" hidden></pre>
+    </div>
+
+    <details class="stdout-box">
+      <summary>Tool output log</summary>
+      <pre id="stdout"></pre>
+    </details>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
