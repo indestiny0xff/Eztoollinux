@@ -27,6 +27,7 @@
 
   <section class="card">
     <div class="card-label">Evidence</div>
+    <div id="known-paths" class="known-paths"></div>
     <div class="seg" id="input-mode">
       <button class="seg-btn active" data-mode="upload">Upload</button>
       <button class="seg-btn" data-mode="server">Browse /data</button>
@@ -72,6 +73,28 @@
       <span id="status-text"></span>
     </div>
     <div id="out-files" class="out-files"></div>
+    <button id="sql-open" class="mini-btn sql-open" type="button" hidden>Open SQL console</button>
+
+    <div id="sql-panel" class="sql-panel" hidden>
+      <div class="sql-layout">
+        <aside class="sql-schema">
+          <div class="sql-db-name" id="sql-db-name"></div>
+          <div id="sql-tables"></div>
+        </aside>
+        <div class="sql-main">
+          <div class="sql-editor-wrap">
+            <textarea id="sql-input" class="sql-input" rows="4" spellcheck="false"
+              placeholder="SELECT * FROM ... WHERE ... -- Ctrl+Enter to run, click a table on the left to start"></textarea>
+            <div id="sql-ac" class="sql-ac" hidden></div>
+          </div>
+          <div class="sql-run-row">
+            <button id="sql-run" class="run-btn sql-run-btn" type="button">Run query</button>
+            <span id="sql-status" class="sql-status"></span>
+          </div>
+          <div id="sql-results" class="table-wrap sql-results" hidden></div>
+        </div>
+      </div>
+    </div>
 
     <div id="viewer" class="viewer" hidden>
       <div class="viewer-bar">

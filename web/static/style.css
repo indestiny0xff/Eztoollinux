@@ -350,6 +350,113 @@ tbody mark { background: var(--accent); color: #191204; border-radius: 2px; padd
 .help-box { margin-top: 0; }
 .help-box pre { color: var(--text); max-height: 60vh; }
 
+/* known artifact locations */
+.known-paths { margin-bottom: 12px; }
+.known-paths:empty { display: none; }
+.kp-title {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.known-paths code {
+  display: block;
+  font: 12px/1.7 var(--mono);
+  color: var(--data);
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+/* SQL console */
+.sql-open { margin-bottom: 12px; color: var(--accent); }
+.sql-panel { margin-bottom: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.sql-layout { display: grid; grid-template-columns: 250px 1fr; gap: 14px; }
+.sql-schema {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+.sql-db-name {
+  font: 11px var(--mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+.sql-table summary {
+  cursor: pointer;
+  font: 12.5px var(--mono);
+  padding: 3px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  list-style-position: outside;
+}
+.sql-table summary span { color: var(--muted); font-size: 10.5px; white-space: nowrap; }
+.sql-tbl-name, .sql-col-name {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--data);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  word-break: break-all;
+}
+.sql-tbl-name:hover, .sql-col-name:hover { color: var(--accent); }
+.sql-table ul { list-style: none; margin: 2px 0 6px; padding: 0 0 0 14px; }
+.sql-table li { font: 11.5px/1.7 var(--mono); }
+.sql-table li .sql-col-name { color: var(--text); opacity: .85; }
+.sql-table li .sql-col-name:hover { color: var(--accent); opacity: 1; }
+.sql-editor-wrap { position: relative; }
+.sql-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--data);
+  border-radius: 7px;
+  color: var(--text);
+  font: 13px/1.6 var(--mono);
+  padding: 10px 12px;
+  outline: none;
+  resize: vertical;
+}
+.sql-input:focus { border-color: var(--accent-dim); border-left-color: var(--data); }
+.sql-ac {
+  position: absolute;
+  left: 12px;
+  top: 100%;
+  z-index: 10;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  min-width: 200px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  overflow: hidden;
+}
+.sql-ac-item {
+  font: 12.5px var(--mono);
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sql-ac-item.active, .sql-ac-item:hover { background: var(--bg); color: var(--accent); }
+.sql-run-row { display: flex; align-items: center; gap: 12px; margin: 10px 0; }
+.sql-run-btn { padding: 7px 22px; }
+.sql-status { font: 12px var(--mono); color: var(--muted); }
+.sql-results { max-height: 48vh; }
+.sql-error { padding: 12px 14px; color: var(--err); font: 12.5px var(--mono); margin: 0; }
+
+@media (max-width: 900px) {
+  .sql-layout { grid-template-columns: 1fr; }
+  .sql-schema { max-height: 220px; }
+}
+
 button:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

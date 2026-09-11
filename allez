@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+#
+# allez - run ALL EZ Tools against a mounted Windows system root.
+# Discovers artifacts in their known locations (every user profile included),
+# parses everything to CSV, then loads every CSV into one SQLite database.
+#
+# Usage: allez -s <source> -o <output> [--no-db]
+#   -s        root that corresponds to C:\ (contains Windows/, Users/)
+#   -o        output directory (created if needed)
+#   --no-db   skip building allez.db
+set -uo pipefail
+
+EZTOOLS_DIR="${EZTOOLS_DIR:-/opt/eztools}"
+SRC="" OUT="" MAKE_DB=1
+
+usage() { sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -s) SRC="${2:-}"; shift 2 ;;
+    -o) OUT="${2:-}"; shift 2 ;;
+    --no-db) MAKE_DB=0; shift ;;
+    -h|--help|-?) usage ;;
+    *) echo "unknown option: $1" >&2; usage 1 ;;
+  esac
+done
+[[ -n "$SRC" && -n "$OUT" ]] || usage 1
+[[ -d "$SRC" ]] || { echo "[x] source not found: $SRC" >&2; exit 1; }
+SRC="${SRC%/}"
+mkdir -p "$OUT"
+LOG="$OUT/allez.log"; : > "$LOG"
+
+log()  { printf '[+] %s\n' "$*"; }
+warn() { printf '[!] %s\n' "$*" >&2; }
+
+RAN=(); SKIPPED=()
+skip() { SKIPPED+=("$1"); }
+
+# Case-insensitive lookups: mounted/copied Windows trees vary in casing.
+first_file() { find "$SRC" -maxdepth "$1" -type f -ipath "$SRC/$2" -print -quit 2>/dev/null; }
+first_dir()  { find "$SRC" -maxdepth "$1" -type d -ipath "$SRC/$2" -print -quit 2>/dev/null; }
+
+run_tool() { # run_tool <label> <cmd...>
+  local label="$1"; shift
+  log "$label"
+  if "$@" >>"$LOG" 2>&1; then
+    RAN+=("$label")
+  else
+    warn "$label failed (see allez.log)"
+  fi
+}
+
+recmd_batch() {
+  local rebs
+  rebs="$(find "$EZTOOLS_DIR/RECmd" -iname '*.reb' 2>/dev/null | sort)"
+  grep -im1 kroll <<<"$rebs" || head -n1 <<<"$rebs"
+}
+
+log "Source: $SRC"
+log "Output: $OUT"
+echo
+
+# --- system-wide artifacts ----------------------------------------------
+f="$(first_file 1 '$MFT')"
+if [[ -n "$f" ]]; then run_tool 'MFTECmd ($MFT)' mftecmd -f "$f" --csv "$OUT/MFTECmd"
+else skip 'MFTECmd: no $MFT at the source root'; fi
+
+f="$(first_file 2 '$Extend/$J')"; [[ -n "$f" ]] || f="$(first_file 1 '$J')"
+if [[ -n "$f" ]]; then run_tool 'MFTECmd ($J)' mftecmd -f "$f" --csv "$OUT/MFTECmd"
+else skip 'MFTECmd: no $J ($Extend\$J)'; fi
+
+d="$(first_dir 4 'Windows/System32/winevt/Logs')"
+if [[ -n "$d" ]]; then run_tool 'EvtxECmd (event logs)' evtxecmd -d "$d" --csv "$OUT/EvtxECmd"
+else skip 'EvtxECmd: no Windows\System32\winevt\Logs'; fi
+
+d="$(first_dir 2 'Windows/Prefetch')"
+if [[ -n "$d" ]]; then run_tool 'PECmd (prefetch)' pecmd -d "$d" --csv "$OUT/PECmd" -q
+else skip 'PECmd: no Windows\Prefetch'; fi
+
+f="$(first_file 4 'Windows/appcompat/Programs/Amcache.hve')"
+if [[ -n "$f" ]]; then run_tool 'AmcacheParser' amcacheparser -f "$f" -i --csv "$OUT/AmcacheParser"
+else skip 'AmcacheParser: no Windows\appcompat\Programs\Amcache.hve'; fi
+
+sys_hive="$(first_file 4 'Windows/System32/config/SYSTEM')"
+if [[ -n "$sys_hive" ]]; then run_tool 'AppCompatCacheParser (shimcache)' appcompatcacheparser -f "$sys_hive" --csv "$OUT/AppCompatCacheParser"
+else skip 'AppCompatCacheParser: no SYSTEM hive'; fi
+
+d="$(first_dir 3 'Windows/System32/config')"
+if [[ -n "$d" ]]; then
+  batch="$(recmd_batch)"
+  if [[ -n "$batch" ]]; then run_tool 'RECmd (system hives)' recmd -d "$d" --bn "$batch" --csv "$OUT/RECmd"
+  else skip 'RECmd: no batch file found under RECmd/BatchExamples'; fi
+else skip 'RECmd: no Windows\System32\config'; fi
+
+f="$(first_file 4 'Windows/System32/sru/SRUDB.dat')"
+if [[ -n "$f" ]]; then
+  soft_hive="$(first_file 4 'Windows/System32/config/SOFTWARE')"
+  if [[ -n "$soft_hive" ]]; then run_tool 'SrumECmd (SRUM)' srumecmd -f "$f" -r "$soft_hive" --csv "$OUT/SrumECmd"
+  else run_tool 'SrumECmd (SRUM)' srumecmd -f "$f" --csv "$OUT/SrumECmd"; fi
+else skip 'SrumECmd: no Windows\System32\sru\SRUDB.dat'; fi
+
+d="$(first_dir 4 'Windows/System32/LogFiles/Sum')"
+if [[ -n "$d" ]]; then run_tool 'SumECmd (user access logging)' sumecmd -d "$d" --csv "$OUT/SumECmd"
+else skip 'SumECmd: no Windows\System32\LogFiles\Sum'; fi
+
+f="$(first_file 4 'Windows/AppCompat/Programs/RecentFileCache.bcf')"
+if [[ -n "$f" ]]; then run_tool 'RecentFileCacheParser' recentfilecacheparser -f "$f" --csv "$OUT/RecentFileCacheParser"
+else skip 'RecentFileCacheParser: no RecentFileCache.bcf'; fi
+
+d="$(first_dir 1 '$Recycle.Bin')"
+if [[ -n "$d" ]]; then run_tool 'RBCmd (recycle bin)' rbcmd -d "$d" --csv "$OUT/RBCmd" -q
+else skip 'RBCmd: no $Recycle.Bin'; fi
+
+# --- per-user artifacts --------------------------------------------------
+users_dir="$(first_dir 1 'Users')"
+if [[ -n "$users_dir" ]]; then
+  for u in "$users_dir"/*/; do
+    uname="$(basename "$u")"
+    case "$uname" in "All Users"|"Default User"|Public|desktop.ini) continue ;; esac
+    recent="$(find "$u" -maxdepth 6 -type d -ipath '*/appdata/roaming/microsoft/windows/recent' -print -quit 2>/dev/null)"
+    if [[ -n "$recent" ]]; then
+      run_tool "LECmd (lnk, user $uname)" lecmd -d "$recent" --csv "$OUT/LECmd/$uname" -q
+      run_tool "JLECmd (jump lists, user $uname)" jlecmd -d "$recent" --csv "$OUT/JLECmd/$uname" -q
+    fi
+    while IFS= read -r acdb; do
+      run_tool "WxTCmd (timeline, user $uname)" wxtcmd -f "$acdb" --csv "$OUT/WxTCmd/$uname"
+    done < <(find "$u" -maxdepth 7 -type f -iname 'ActivitiesCache.db' -ipath '*connecteddevicesplatform*' 2>/dev/null)
+  done
+  run_tool 'SBECmd (shellbags, all users)' sbecmd -d "$users_dir" --csv "$OUT/SBECmd"
+else
+  skip 'user artifacts (LECmd/JLECmd/WxTCmd/SBECmd): no Users folder'
+fi
+
+# --- build the database --------------------------------------------------
+if [[ "$MAKE_DB" == 1 ]]; then
+  echo
+  db="$OUT/allez.db"
+  rm -f "$db"
+  imported=0
+  while IFS= read -r -d '' csv; do
+    base="$(basename "$csv" .csv)"
+    tbl="$(printf '%s' "$base" | sed -E 's/^[0-9]{8,}_//' \
+      | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '_' \
+      | sed -E 's/_+/_/g; s/^_//; s/_$//; s/^([0-9])/t_\1/')"
+    [[ -n "$tbl" ]] || tbl="table_$imported"
+    if [[ -n "$(sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='$tbl'" 2>/dev/null)" ]]; then
+      # same output type from another run/user: append, skipping the header row
+      if sqlite3 "$db" ".mode csv" ".import --skip 1 \"$csv\" $tbl" >>"$LOG" 2>&1; then imported=$((imported+1))
+      else warn "import failed: $base"; fi
+    else
+      if sqlite3 "$db" ".mode csv" ".import \"$csv\" $tbl" >>"$LOG" 2>&1; then imported=$((imported+1))
+      else warn "import failed: $base"; fi
+    fi
+  done < <(find "$OUT" -type f -iname '*.csv' -print0)
+  log "Database: $db ($imported CSV files imported)"
+  while IFS= read -r t; do
+    log "  table $t: $(sqlite3 "$db" "SELECT COUNT(*) FROM \"$t\"") rows"
+  done < <(sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name" 2>/dev/null)
+fi
+
+# --- summary --------------------------------------------------------------
+echo
+log "Ran ${#RAN[@]} parser(s); full tool output in allez.log"
+if [[ ${#SKIPPED[@]} -gt 0 ]]; then
+  log "Skipped (artifact not present):"
+  for s in "${SKIPPED[@]}"; do printf '      %s\n' "$s"; done
+fi
+[[ ${#RAN[@]} -gt 0 ]] || { warn "nothing was parsed - is $SRC the root of a Windows system drive?"; exit 1; }

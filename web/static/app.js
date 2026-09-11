@@ -61,6 +61,10 @@ function selectTool(tool) {
   $("help-summary").textContent = "Command-line help for " + tool.name + " (all options)";
   $("help-text").textContent = "Loading...";
   if ($("help-details").open) loadHelp();
+  $("known-paths").innerHTML = (tool.paths || []).length
+    ? '<span class="kp-title">Known Windows locations</span>' +
+      tool.paths.map((p) => "<code>" + esc(p) + "</code>").join("")
+    : "";
   $("tool-name").textContent = tool.name;
   $("tool-desc").textContent = tool.desc;
   $("drop-hint").textContent = "expected: " + tool.hint;
@@ -198,6 +202,16 @@ function currentInput() {
 function updatePreview() {
   if (!state.tool) return;
   const inp = currentInput();
+  if (state.tool.runner === "allez") {
+    const extraA = $("args-input").value.trim();
+    $("cmd-preview").innerHTML =
+      '<span class="p">$</span> <span class="t">allez</span>' +
+      ' <span class="fl">-s</span> <span class="v">' + esc(inp.label) + "</span>" +
+      ' <span class="fl">-o</span> <span class="v">output/</span>' +
+      (extraA ? " " + esc(extraA) : "");
+    $("run-btn").disabled = !inp.ok || state.job?.status === "running";
+    return;
+  }
   const flag = inp.dir ? "-d" : "-f";
   let out = "";
   if (state.format === "csv") out = ' <span class="fl">--csv</span> <span class="v">output/</span>';
@@ -225,6 +239,9 @@ $("run-btn").addEventListener("click", async () => {
   $("out-files").innerHTML = "";
   $("viewer").hidden = true;
   $("stdout").textContent = "";
+  $("sql-open").hidden = true;
+  $("sql-panel").hidden = true;
+  state.schema = null;
 
   const res = await fetch("/api/run", { method: "POST", body: fd });
   if (!res.ok) {
@@ -264,8 +281,11 @@ async function pollJob() {
       <span>${fmtSize(f.size)}</span></button>`)
     .join("");
   if (!job.files.length && job.stdout) $("stdout").parentElement.open = true;
+  const queryable = job.files.some((f) => /\.(csv|tsv|json|jsonl|db)$/i.test(f.name));
+  $("sql-open").hidden = !queryable;
   const first = job.files.find((f) => /\.(csv|tsv|json|jsonl)$/i.test(f.name)) || job.files[0];
   if (first) openFile(first.name);
+  if (queryable && state.tool.runner === "allez") openSql();
 }
 
 /* ---------- output viewer ---------- */
@@ -370,6 +390,179 @@ async function loadTable() {
   $("pg-prev").disabled = state.offset === 0;
   $("pg-next").disabled = to >= data.filtered;
 }
+
+/* ---------- SQL console ---------- */
+const SQL_KEYWORDS = [
+  "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "LIKE", "GLOB", "IN", "IS",
+  "NULL", "ORDER BY", "GROUP BY", "HAVING", "LIMIT", "OFFSET", "DISTINCT",
+  "COUNT(*)", "COUNT", "MIN", "MAX", "SUM", "AVG", "AS", "ASC", "DESC",
+  "BETWEEN", "CASE", "WHEN", "THEN", "ELSE", "END", "JOIN", "LEFT JOIN",
+  "ON", "UNION", "UNION ALL", "CAST", "LOWER", "UPPER", "LENGTH", "SUBSTR",
+];
+
+$("sql-open").addEventListener("click", openSql);
+
+async function openSql() {
+  $("sql-panel").hidden = false;
+  $("sql-open").hidden = true;
+  if (state.schema) return;
+  $("sql-db-name").textContent = "building database...";
+  $("sql-tables").innerHTML = "";
+  const res = await fetch("/api/jobs/" + state.job.id + "/db", { method: "POST" });
+  if (!res.ok) {
+    $("sql-db-name").textContent = "database error: " + esc(await res.text());
+    return;
+  }
+  state.schema = await res.json();
+  renderSchema();
+  if (!$("sql-input").value && state.schema.tables.length) {
+    $("sql-input").value = 'SELECT * FROM "' + state.schema.tables[0].name + '" LIMIT 100';
+  }
+}
+
+function renderSchema() {
+  const s = state.schema;
+  $("sql-db-name").textContent = s.db + " - " + s.tables.length + " table" +
+    (s.tables.length === 1 ? "" : "s");
+  $("sql-tables").innerHTML = s.tables.map((t, i) =>
+    `<details class="sql-table"${i === 0 ? " open" : ""}>
+      <summary><button class="sql-tbl-name" data-t="${esc(t.name)}" type="button"
+        title="Insert a SELECT for this table">${esc(t.name)}</button>
+        <span>${t.rows.toLocaleString()} rows</span></summary>
+      <ul>${t.columns.map((c) =>
+        `<li><button class="sql-col-name" data-c="${esc(c.name)}" type="button"
+          title="Insert column name">${esc(c.name)}</button></li>`).join("")}</ul>
+    </details>`).join("");
+}
+
+$("sql-tables").addEventListener("click", (e) => {
+  const tbl = e.target.closest(".sql-tbl-name");
+  const col = e.target.closest(".sql-col-name");
+  if (tbl) {
+    e.preventDefault();
+    $("sql-input").value = 'SELECT * FROM "' + tbl.dataset.t + '" LIMIT 100';
+    $("sql-input").focus();
+  } else if (col) {
+    insertAtCaret($("sql-input"), quoteIdent(col.dataset.c));
+  }
+});
+
+function quoteIdent(name) {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : '"' + name.replace(/"/g, '""') + '"';
+}
+
+function insertAtCaret(el, text) {
+  const s = el.selectionStart, epos = el.selectionEnd;
+  el.value = el.value.slice(0, s) + text + el.value.slice(epos);
+  el.selectionStart = el.selectionEnd = s + text.length;
+  el.focus();
+}
+
+$("sql-run").addEventListener("click", runSql);
+$("sql-input").addEventListener("keydown", (e) => {
+  if (acKeydown(e)) return;
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runSql(); }
+});
+
+async function runSql() {
+  hideAc();
+  const sql = $("sql-input").value.trim();
+  if (!sql || !state.job) return;
+  $("sql-status").textContent = "running...";
+  const res = await fetch("/api/jobs/" + state.job.id + "/db/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sql }),
+  });
+  const data = await res.json().catch(async () => ({ error: "query failed" }));
+  const box = $("sql-results");
+  box.hidden = false;
+  if (data.error) {
+    $("sql-status").textContent = "";
+    box.innerHTML = '<p class="sql-error">' + esc(data.error) + "</p>";
+    return;
+  }
+  $("sql-status").textContent = data.rows.length.toLocaleString() + " row" +
+    (data.rows.length === 1 ? "" : "s") + (data.truncated ? " (showing first 1000)" : "");
+  box.innerHTML = "<table><thead><tr>" +
+    data.headers.map((h) => "<th>" + esc(h) + "</th>").join("") +
+    "</tr></thead><tbody>" +
+    data.rows.map((r) => "<tr>" +
+      r.map((c) => `<td title="${esc(c)}">${esc(c)}</td>`).join("") + "</tr>").join("") +
+    "</tbody></table>";
+}
+
+/* --- autocomplete: SQL keywords + table and column names --- */
+let acItems = [], acIndex = 0, acWordStart = 0;
+
+function acCandidates() {
+  const names = [];
+  if (state.schema) {
+    for (const t of state.schema.tables) {
+      names.push(t.name);
+      for (const c of t.columns) names.push(c.name);
+    }
+  }
+  return SQL_KEYWORDS.concat([...new Set(names)]);
+}
+
+$("sql-input").addEventListener("input", () => {
+  const el = $("sql-input");
+  const upto = el.value.slice(0, el.selectionStart);
+  const m = upto.match(/[A-Za-z0-9_$]+$/);
+  if (!m || m[0].length < 2) { hideAc(); return; }
+  const word = m[0];
+  acWordStart = el.selectionStart - word.length;
+  const lower = word.toLowerCase();
+  const seen = new Set();
+  acItems = acCandidates().filter((c) => {
+    const k = c.toLowerCase();
+    if (!k.startsWith(lower) || k === lower || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).slice(0, 8);
+  if (!acItems.length) { hideAc(); return; }
+  acIndex = 0;
+  renderAc();
+});
+
+function renderAc() {
+  const box = $("sql-ac");
+  box.hidden = false;
+  box.innerHTML = acItems.map((c, i) =>
+    `<div class="sql-ac-item${i === acIndex ? " active" : ""}" data-i="${i}">${esc(c)}</div>`).join("");
+}
+
+function hideAc() { $("sql-ac").hidden = true; acItems = []; }
+
+function acAccept(i) {
+  const el = $("sql-input");
+  const cand = acItems[i];
+  const text = /^[A-Za-z_(*][A-Za-z0-9_()* ]*$/.test(cand) ? cand : quoteIdent(cand);
+  el.value = el.value.slice(0, acWordStart) + text + el.value.slice(el.selectionStart);
+  el.selectionStart = el.selectionEnd = acWordStart + text.length;
+  hideAc();
+  el.focus();
+}
+
+function acKeydown(e) {
+  if ($("sql-ac").hidden || !acItems.length) return false;
+  if (e.key === "ArrowDown") { acIndex = (acIndex + 1) % acItems.length; renderAc(); }
+  else if (e.key === "ArrowUp") { acIndex = (acIndex + acItems.length - 1) % acItems.length; renderAc(); }
+  else if (e.key === "Tab" || e.key === "Enter") { acAccept(acIndex); }
+  else if (e.key === "Escape") { hideAc(); }
+  else return false;
+  e.preventDefault();
+  return true;
+}
+
+$("sql-ac").addEventListener("mousedown", (e) => {
+  const item = e.target.closest(".sql-ac-item");
+  if (item) { e.preventDefault(); acAccept(+item.dataset.i); }
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".sql-editor-wrap")) hideAc();
+});
 
 /* ---------- per-tool CLI help ---------- */
 async function loadHelp() {

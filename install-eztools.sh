@@ -63,8 +63,9 @@ install_packages() {
 }
 
 missing=()
-command -v wget  >/dev/null 2>&1 || missing+=(wget)
-command -v unzip >/dev/null 2>&1 || missing+=(unzip)
+command -v wget    >/dev/null 2>&1 || missing+=(wget)
+command -v unzip   >/dev/null 2>&1 || missing+=(unzip)
+command -v sqlite3 >/dev/null 2>&1 || missing+=(sqlite3)
 if [[ ${#missing[@]} -gt 0 ]]; then
   log "Installing dependencies: ${missing[*]}"
   install_packages ca-certificates "${missing[@]}"
@@ -134,6 +135,21 @@ EOF
   chmod +x "${BIN_DIR}/${name}"
   installed+=("$name")
 done
+
+# --- allez orchestrator ------------------------------------------------------
+# Runs every tool against a mounted Windows root and builds a SQLite database.
+allez_src="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/allez"
+if [[ -f "$allez_src" ]]; then
+  install -m 0755 "$allez_src" "$BIN_DIR/allez"
+  installed+=(allez)
+elif wget -q https://raw.githubusercontent.com/indestiny0xff/Eztoollinux/main/allez \
+    -O "$BIN_DIR/allez"; then
+  chmod +x "$BIN_DIR/allez"
+  installed+=(allez)
+else
+  rm -f "$BIN_DIR/allez"
+  warn "Could not install allez (not found next to this script, download failed)."
+fi
 
 # --- summary ----------------------------------------------------------------
 echo

@@ -7,10 +7,10 @@ RUN apt-get update \
        wget unzip ca-certificates python3 python3-flask gunicorn \
     && rm -rf /var/lib/apt/lists/*
 
-COPY install-eztools.sh /tmp/install-eztools.sh
+COPY install-eztools.sh allez /tmp/
 RUN chmod +x /tmp/install-eztools.sh \
     && SKIP_DOTNET=1 /tmp/install-eztools.sh \
-    && rm -f /tmp/install-eztools.sh
+    && rm -f /tmp/install-eztools.sh /tmp/allez
 
 COPY web/app.py /app/app.py
 COPY web/static /app/static

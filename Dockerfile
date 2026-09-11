@@ -5,10 +5,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends wget unzip ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY install-eztools.sh /tmp/install-eztools.sh
+COPY install-eztools.sh allez /tmp/
 RUN chmod +x /tmp/install-eztools.sh \
     && SKIP_DOTNET=1 /tmp/install-eztools.sh \
-    && rm -f /tmp/install-eztools.sh
+    && rm -f /tmp/install-eztools.sh /tmp/allez
 
 WORKDIR /data
 CMD ["bash"]

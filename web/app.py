@@ -7,11 +7,13 @@ searched, sorted, and paginated in the browser without shipping the whole
 file to the client.
 """
 
+import csv as csvmod
 import glob
 import json
 import os
 import re
 import shlex
+import sqlite3
 import subprocess
 import threading
 import uuid
@@ -83,8 +85,42 @@ TOOLS = [
     {"id": "rla", "cmd": "rla", "name": "rla",
      "desc": "Replay registry transaction logs into a clean hive",
      "input": "either", "hint": "hive + .LOG1/.LOG2", "outputs": ["files"], "outflag": "--out"},
+    {"id": "allez", "cmd": "allez", "name": "ALLEZ",
+     "desc": "Run every tool against a mounted Windows root, auto-discover all artifacts, build one SQLite database",
+     "input": "dir", "hint": "root of a mounted image or copied C:\\ drive (contains Windows\\, Users\\)",
+     "outputs": ["db"], "runner": "allez"},
 ]
 TOOLS_BY_ID = {t["id"]: t for t in TOOLS}
+
+# Known Windows locations for each tool's input, shown in the UI.
+# <user> means the artifact exists per user profile (allez checks every user).
+KNOWN_PATHS = {
+    "mftecmd": [r"C:\$MFT", r"C:\$Extend\$J", r"C:\$Boot", r"C:\$Secure ($SDS)"],
+    "evtxecmd": [r"C:\Windows\System32\winevt\Logs"],
+    "pecmd": [r"C:\Windows\Prefetch"],
+    "recmd": [r"C:\Windows\System32\config (SYSTEM, SOFTWARE, SAM, SECURITY)",
+              r"C:\Users\<user>\NTUSER.DAT",
+              r"C:\Users\<user>\AppData\Local\Microsoft\Windows\UsrClass.dat"],
+    "lecmd": [r"C:\Users\<user>\AppData\Roaming\Microsoft\Windows\Recent",
+              r"C:\Users\<user>\Desktop"],
+    "jlecmd": [r"C:\Users\<user>\AppData\Roaming\Microsoft\Windows\Recent\AutomaticDestinations",
+               r"C:\Users\<user>\AppData\Roaming\Microsoft\Windows\Recent\CustomDestinations"],
+    "amcacheparser": [r"C:\Windows\appcompat\Programs\Amcache.hve"],
+    "appcompatcacheparser": [r"C:\Windows\System32\config\SYSTEM"],
+    "bstrings": [r"any file (memory dumps, unknown binaries, pagefile.sys, ...)"],
+    "rbcmd": [r"C:\$Recycle.Bin\<SID>\$I******"],
+    "recentfilecacheparser": [r"C:\Windows\AppCompat\Programs\RecentFileCache.bcf"],
+    "sbecmd": [r"C:\Users\<user>\NTUSER.DAT",
+               r"C:\Users\<user>\AppData\Local\Microsoft\Windows\UsrClass.dat"],
+    "sqlecmd": [r"C:\Users\<user>\AppData\Local\Google\Chrome\User Data\Default\History",
+                r"C:\Users\<user>\AppData\Roaming\Mozilla\Firefox\Profiles\<profile>\places.sqlite"],
+    "srumecmd": [r"C:\Windows\System32\sru\SRUDB.dat",
+                 r"C:\Windows\System32\config\SOFTWARE (optional, -r)"],
+    "sumecmd": [r"C:\Windows\System32\LogFiles\Sum"],
+    "wxtcmd": [r"C:\Users\<user>\AppData\Local\ConnectedDevicesPlatform\<id>\ActivitiesCache.db"],
+    "rla": [r"C:\Windows\System32\config (hive + .LOG1/.LOG2 pairs)"],
+    "allez": [r"point it at the ROOT of the mounted image / copied drive - it checks every known path above, for every user profile"],
+}
 
 JOBS = {}        # id -> job dict
 JOBS_LOCK = threading.Lock()
@@ -106,6 +142,11 @@ def recmd_batch():
 
 
 def build_command(tool, input_path, input_is_dir, fmt, extra_args, out_dir):
+    if tool.get("runner") == "allez":
+        cmd = ["allez", "-s", input_path, "-o", out_dir]
+        if extra_args:
+            cmd += shlex.split(extra_args)
+        return cmd
     cmd = [tool["cmd"]]
     if tool.get("preargs") == "recmd_batch":
         batch = recmd_batch()
@@ -156,8 +197,10 @@ def index():
 
 @app.get("/api/tools")
 def api_tools():
-    return jsonify([{k: t[k] for k in ("id", "name", "desc", "input", "hint", "outputs")}
-                    for t in TOOLS])
+    return jsonify([dict(
+        {k: t[k] for k in ("id", "name", "desc", "input", "hint", "outputs")},
+        runner=t.get("runner", ""), paths=KNOWN_PATHS.get(t["id"], []))
+        for t in TOOLS])
 
 
 @app.get("/api/tools/<tool_id>/help")
@@ -280,7 +323,6 @@ def load_table(path):
     if cached and cached[0] == mtime:
         return cached[1], cached[2], cached[3]
 
-    import csv as csvmod
     headers, rows, truncated = [], [], False
     lower = path.lower()
     if lower.endswith((".json", ".jsonl")):
@@ -355,6 +397,96 @@ def api_table(job_id):
     limit = min(500, max(1, int(request.args.get("limit", 100))))
     return jsonify({"headers": headers, "rows": rows[offset:offset + limit],
                     "filtered": len(rows), "truncated": truncated})
+
+
+def table_name_for(filename):
+    """Match allez's naming: strip timestamp prefix, lowercase, [a-z0-9_]."""
+    base = os.path.splitext(os.path.basename(filename))[0]
+    base = re.sub(r"^[0-9]{8,}_", "", base)
+    name = re.sub(r"_+", "_", re.sub(r"[^a-z0-9]", "_", base.lower())).strip("_")
+    if not name:
+        name = "results"
+    if name[0].isdigit():
+        name = "t_" + name
+    return name
+
+
+def build_job_db(job):
+    """Return the path of the job's SQLite db, building it from outputs if needed."""
+    out_dir = job["out_dir"]
+    for f in job["files"]:  # a run (like allez) may already ship a database
+        if f["name"].lower().endswith(".db"):
+            return os.path.join(out_dir, f["name"])
+    db_path = os.path.join(out_dir, "results.db")
+    if os.path.exists(db_path):
+        return db_path
+    conn = sqlite3.connect(db_path)
+    try:
+        for f in job["files"]:
+            if not f["name"].lower().endswith((".csv", ".tsv", ".json", ".jsonl")):
+                continue
+            headers, rows, _trunc = load_table(os.path.join(out_dir, f["name"]))
+            if not headers:
+                continue
+            tbl = table_name_for(f["name"])
+            cols = ", ".join('"%s" TEXT' % h.replace('"', '""') for h in headers)
+            existing = conn.execute(
+                "SELECT COUNT(*) FROM pragma_table_info(?)", (tbl,)).fetchone()[0]
+            if existing == 0:
+                conn.execute('CREATE TABLE "%s" (%s)' % (tbl, cols))
+            elif existing != len(headers):
+                tbl = tbl + "_2"
+                conn.execute('CREATE TABLE IF NOT EXISTS "%s" (%s)' % (tbl, cols))
+            ph = ",".join("?" * len(headers))
+            conn.executemany(
+                'INSERT INTO "%s" VALUES (%s)' % (tbl, ph),
+                ((r + [""] * len(headers))[:len(headers)] for r in rows))
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+@app.post("/api/jobs/<job_id>/db")
+def api_db_build(job_id):
+    job = JOBS.get(job_id) or abort(404)
+    if job["status"] != "done" and not job["files"]:
+        abort(400, "Job has no output yet")
+    db_path = build_job_db(job)
+    conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)
+    try:
+        tables = []
+        for (name,) in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"):
+            cols = [{"name": c[1], "type": c[2] or "TEXT"}
+                    for c in conn.execute('PRAGMA table_info("%s")' % name)]
+            count = conn.execute('SELECT COUNT(*) FROM "%s"' % name).fetchone()[0]
+            tables.append({"name": name, "rows": count, "columns": cols})
+    finally:
+        conn.close()
+    return jsonify({"db": os.path.basename(db_path), "tables": tables})
+
+
+@app.post("/api/jobs/<job_id>/db/query")
+def api_db_query(job_id):
+    job = JOBS.get(job_id) or abort(404)
+    sql = (request.get_json(silent=True) or {}).get("sql", "").strip()
+    if not sql:
+        abort(400, "Empty query")
+    db_path = build_job_db(job)
+    conn = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True)
+    conn.execute("PRAGMA query_only = ON")
+    try:
+        cur = conn.execute(sql)
+        headers = [d[0] for d in cur.description] if cur.description else []
+        rows = [["" if v is None else str(v) for v in r] for r in cur.fetchmany(1000)]
+        truncated = bool(cur.fetchone())
+    except sqlite3.Error as exc:
+        return jsonify({"error": str(exc)}), 400
+    finally:
+        conn.close()
+    return jsonify({"headers": headers, "rows": rows, "truncated": truncated})
 
 
 @app.get("/api/jobs/<job_id>/text")

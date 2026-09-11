@@ -4,6 +4,8 @@ Run Eric Zimmerman's EZ Tools (forensic command-line suite) natively on Linux, e
 
 Each tool gets a lowercase wrapper command (e.g. `mftecmd`, `evtxecmd`), so no aliases or `dotnet` invocations are needed.
 
+Also included: `allez`, an orchestrator that runs the whole suite against a mounted Windows drive and builds one queryable SQLite database (see below).
+
 ## Option 1: Native install
 
 Tested on Ubuntu 24.04. Supports apt and dnf based distributions.
@@ -65,10 +67,24 @@ Features:
 - CSV and JSON results as a paginated table with full-text search, match highlighting, and column sorting (handled server side, so large outputs stay fast)
 - Raw file downloads and the full tool log for every run
 - Built-in command-line help viewer per tool, for checking every available option
+- Known Windows artifact locations shown for every tool, so you know where inputs live
+- ALLEZ as a tool in the page: point it at a mounted drive under /data and it runs the whole suite
+- SQL console on every run: outputs become a SQLite database with a schema explorer (tables, columns, row counts) and a query editor with autocompletion for SQL keywords, table names, and column names (Ctrl+Enter to run; queries are read-only)
 
 To reach it from another machine on your network, add a line like `192.168.1.x eztoollinux.lan` to that machine's hosts file, or just use the server's IP.
 
 Without compose: `docker build -f web/Dockerfile -t eztools-web .` then `docker run -d -p 80:8080 -v /path/to/evidence:/data eztools-web`.
+
+## allez: run everything, query everything
+
+`allez` (installed by both the script and the Docker images) takes the root of a mounted image or copied `C:\` drive, finds every artifact in its known location automatically - `$MFT`, event logs, Prefetch, Amcache, ShimCache, registry hives, SRUM, SUM, Recycle Bin, and the per-user artifacts (shortcuts, jump lists, timeline, shellbags) for every user profile - runs the matching tool on each, and loads all resulting CSVs into a single SQLite database:
+
+```bash
+allez -s /mnt/image -o /cases/output
+sqlite3 /cases/output/allez.db "SELECT name FROM sqlite_master WHERE type='table'"
+```
+
+Artifacts that are not present are skipped and reported. `--no-db` skips the database step; the full tool output lands in `allez.log`.
 
 ## Usage examples
 
