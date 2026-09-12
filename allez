@@ -4,21 +4,25 @@
 # Discovers artifacts in their known locations (every user profile included),
 # parses everything to CSV, then loads every CSV into one SQLite database.
 #
-# Usage: allez -s <source> -o <output> [--no-db]
+# Usage: allez -s <source> -o <output> [-e] [--no-db]
 #   -s        root that corresponds to C:\ (contains Windows/, Users/)
 #   -o        output directory (created if needed)
+#   -e        extended scan: sweep whole directories (Packages, browser
+#             profiles, all of Users) instead of targeting known files.
+#             Thorough but MUCH slower on real systems (probes caches too).
 #   --no-db   skip building allez.db
 set -uo pipefail
 
 EZTOOLS_DIR="${EZTOOLS_DIR:-/opt/eztools}"
-SRC="" OUT="" MAKE_DB=1
+SRC="" OUT="" MAKE_DB=1 EXTENDED=0
 
-usage() { sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -s) SRC="${2:-}"; shift 2 ;;
     -o) OUT="${2:-}"; shift 2 ;;
+    -e|--extended) EXTENDED=1; shift ;;
     --no-db) MAKE_DB=0; shift ;;
     -h|--help|-?) usage ;;
     *) echo "unknown option: $1" >&2; usage 1 ;;
@@ -150,32 +154,60 @@ if [[ -n "$users_dir" ]]; then
     [[ -n "$startmenu" ]] && run_tool "LECmd (start menu, user $uname)" \
       lecmd -d "$startmenu" --csv "$OUT/LECmd/${uname}_startmenu" -q
     # SQLite-based app data with SQLECmd maps (browsers, notifications, store apps)
-    for entry in 'Chrome:AppData/Local/Google/Chrome/User Data' \
-                 'Edge:AppData/Local/Microsoft/Edge/User Data' \
-                 'Brave:AppData/Local/BraveSoftware/Brave-Browser/User Data' \
-                 'Vivaldi:AppData/Local/Vivaldi/User Data' \
-                 'Opera:AppData/Roaming/Opera Software' \
-                 'Firefox:AppData/Roaming/Mozilla/Firefox/Profiles' \
-                 'Notifications:AppData/Local/Microsoft/Windows/Notifications' \
-                 'Packages:AppData/Local/Packages'; do
-      blabel="${entry%%:*}"; brel="${entry#*:}"
-      bdir="$(find "$u" -maxdepth 6 -type d -ipath "*/${brel}" -print -quit 2>/dev/null)"
-      [[ -n "$bdir" ]] && run_tool "SQLECmd ($blabel, user $uname)" \
-        sqlecmd -d "$bdir" --csv "$OUT/SQLECmd/$uname"
-    done
+    if [[ "$EXTENDED" == 1 ]]; then
+      # sweep whole directories: thorough, but probes every cache file too
+      for entry in 'Chrome:AppData/Local/Google/Chrome/User Data' \
+                   'Edge:AppData/Local/Microsoft/Edge/User Data' \
+                   'Brave:AppData/Local/BraveSoftware/Brave-Browser/User Data' \
+                   'Vivaldi:AppData/Local/Vivaldi/User Data' \
+                   'Opera:AppData/Roaming/Opera Software' \
+                   'Firefox:AppData/Roaming/Mozilla/Firefox/Profiles' \
+                   'Notifications:AppData/Local/Microsoft/Windows/Notifications' \
+                   'Packages:AppData/Local/Packages'; do
+        blabel="${entry%%:*}"; brel="${entry#*:}"
+        bdir="$(find "$u" -maxdepth 6 -type d -ipath "*/${brel}" -print -quit 2>/dev/null)"
+        [[ -n "$bdir" ]] && run_tool "SQLECmd ($blabel, user $uname)" \
+          sqlecmd -d "$bdir" --csv "$OUT/SQLECmd/$uname"
+      done
+    else
+      # target the known database files directly - seconds instead of minutes
+      while IFS= read -r -d '' dbf; do
+        run_tool "SQLECmd ($(basename "$dbf"), user $uname)" \
+          sqlecmd -f "$dbf" --csv "$OUT/SQLECmd/$uname"
+      done < <(find "$u" -maxdepth 9 -type f \( \
+          \( \( -iname 'History' -o -iname 'Web Data' \) -ipath '*/user data/*' \) -o \
+          \( -iname 'History' -ipath '*/opera*' \) -o \
+          -iname 'places.sqlite' -o -iname 'wpndatabase.db' \) -print0 2>/dev/null)
+    fi
     while IFS= read -r acdb; do
       run_tool "WxTCmd (timeline, user $uname)" wxtcmd -f "$acdb" --csv "$OUT/WxTCmd/$uname"
     done < <(find "$u" -maxdepth 7 -type f -iname 'ActivitiesCache.db' -ipath '*connecteddevicesplatform*' 2>/dev/null)
+    ntuser="$(find "$u" -maxdepth 1 -type f -iname 'NTUSER.DAT' -print -quit 2>/dev/null)"
+    usrclass="$(find "$u" -maxdepth 6 -type f -ipath '*/appdata/local/microsoft/windows/usrclass.dat' -print -quit 2>/dev/null)"
     if [[ -n "$batch" ]]; then
-      ntuser="$(find "$u" -maxdepth 1 -type f -iname 'NTUSER.DAT' -print -quit 2>/dev/null)"
       [[ -n "$ntuser" ]] && run_tool "RECmd (NTUSER.DAT, user $uname)" \
         recmd -f "$ntuser" --bn "$batch" --csv "$OUT/RECmd/$uname"
-      usrclass="$(find "$u" -maxdepth 6 -type f -ipath '*/appdata/local/microsoft/windows/usrclass.dat' -print -quit 2>/dev/null)"
       [[ -n "$usrclass" ]] && run_tool "RECmd (UsrClass.dat, user $uname)" \
         recmd -f "$usrclass" --bn "$batch" --csv "$OUT/RECmd/$uname"
     fi
+    # stage hive copies (with transaction logs) for a fast SBECmd pass
+    if [[ "$EXTENDED" != 1 && ( -n "$ntuser" || -n "$usrclass" ) ]]; then
+      hs="$OUT/.hives/$uname"; mkdir -p "$hs"
+      [[ -n "$ntuser" ]] && find "$(dirname "$ntuser")" -maxdepth 1 -iname 'ntuser.dat*' \
+        -exec cp {} "$hs/" \; 2>/dev/null
+      [[ -n "$usrclass" ]] && find "$(dirname "$usrclass")" -maxdepth 1 -iname 'usrclass.dat*' \
+        -exec cp {} "$hs/" \; 2>/dev/null
+    fi
   done
-  run_tool 'SBECmd (shellbags, all users)' sbecmd -d "$users_dir" --csv "$OUT/SBECmd"
+  if [[ "$EXTENDED" == 1 ]]; then
+    run_tool 'SBECmd (shellbags, full Users scan)' sbecmd -d "$users_dir" --csv "$OUT/SBECmd"
+  elif [[ -d "$OUT/.hives" ]]; then
+    run_tool 'SBECmd (shellbags, staged hives)' sbecmd -d "$OUT/.hives" --csv "$OUT/SBECmd"
+    rm -rf "$OUT/.hives"
+  else
+    skip 'SBECmd: no user hives found'
+  fi
+  [[ "$EXTENDED" == 1 ]] || skip 'full app-data sweep (Packages, browser profile dirs, whole-Users scan): rerun with -e'
 else
   skip 'user artifacts (LECmd/JLECmd/WxTCmd/SBECmd): no Users folder'
 fi

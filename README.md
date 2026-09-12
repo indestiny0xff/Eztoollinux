@@ -86,6 +86,8 @@ sqlite3 /cases/output/allez.db "SELECT name FROM sqlite_master WHERE type='table
 
 Artifacts that are not present are skipped and reported. `--no-db` skips the database step; the full tool output lands in `allez.log`.
 
+By default the scan is fast: it targets known database files and parses staged copies of the user hives (seconds to minutes). Add `-e` for the exhaustive mode, which sweeps whole directories (`AppData\Local\Packages`, full browser profiles, all of `Users`) and can take 10+ minutes per user on a real system because every cache file gets probed.
+
 ## Usage examples
 
 ```bash

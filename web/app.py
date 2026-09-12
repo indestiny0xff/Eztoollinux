@@ -123,7 +123,8 @@ KNOWN_PATHS = {
     "sumecmd": [r"C:\Windows\System32\LogFiles\Sum"],
     "wxtcmd": [r"C:\Users\<user>\AppData\Local\ConnectedDevicesPlatform\<id>\ActivitiesCache.db"],
     "rla": [r"C:\Windows\System32\config (hive + .LOG1/.LOG2 pairs)"],
-    "allez": [r"point it at the ROOT of the mounted image / copied drive - it checks every known path above, for every user profile"],
+    "allez": [r"point it at the ROOT of the mounted image / copied drive - it checks every known path above, for every user profile",
+              r"default: fast targeted scan; add -e in extra arguments for the exhaustive sweep (Packages, browser profile dirs, whole Users) - much slower"],
 }
 
 JOBS = {}        # id -> job dict
