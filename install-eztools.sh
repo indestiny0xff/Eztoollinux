@@ -136,6 +136,30 @@ EOF
   installed+=("$name")
 done
 
+# --- SQLECmd Linux native library --------------------------------------------
+# The zip ships only the Windows SQLite.Interop.dll; fetch the matching Linux
+# build from the official System.Data.SQLite NuGet package.
+sqle_dll="$(find "$INSTALL_DIR/SQLECmd" -iname 'SQLECmd.dll' 2>/dev/null | head -n1)"
+if [[ -n "$sqle_dll" ]]; then
+  sqle_dir="$(dirname "$sqle_dll")"
+  sds_ver="$(grep -aoE '1\.0\.1[0-9]{2}' "$sqle_dll" | sort -u | head -n1)"
+  sds_ver="${sds_ver:-1.0.119}"
+  case "$(uname -m)" in
+    aarch64|arm64) sds_rid="linux-arm64" ;;
+    *)             sds_rid="linux-x64" ;;
+  esac
+  if wget -q "https://www.nuget.org/api/v2/package/Stub.System.Data.SQLite.Core.NetStandard/${sds_ver}" \
+       -O /tmp/sds.nupkg \
+     && unzip -o -q /tmp/sds.nupkg -d /tmp/sds "runtimes/${sds_rid}/native/*" \
+     && cp "/tmp/sds/runtimes/${sds_rid}/native/SQLite.Interop.dll" "$sqle_dir/"; then
+    ln -sf "$sqle_dir/SQLite.Interop.dll" "$sqle_dir/libSQLite.Interop.dll.so"
+    log "SQLECmd: installed Linux SQLite interop ${sds_ver} (${sds_rid})"
+  else
+    warn "SQLECmd: could not install the Linux SQLite interop; SQLECmd will fail to parse databases."
+  fi
+  rm -rf /tmp/sds.nupkg /tmp/sds
+fi
+
 # --- allez orchestrator ------------------------------------------------------
 # Runs every tool against a mounted Windows root and builds a SQLite database.
 allez_src="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/allez"

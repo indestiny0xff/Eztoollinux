@@ -404,6 +404,8 @@ def table_name_for(filename):
     base = os.path.splitext(os.path.basename(filename))[0]
     base = re.sub(r"^[0-9]{8,}_", "", base)
     name = re.sub(r"_+", "_", re.sub(r"[^a-z0-9]", "_", base.lower())).strip("_")
+    # SQLECmd appends a random UUID per run; drop it so tables merge
+    name = re.sub(r"_[0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12}$", "", name)
     if not name:
         name = "results"
     if name[0].isdigit():

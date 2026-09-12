@@ -65,9 +65,16 @@ f="$(first_file 1 '$MFT')"
 if [[ -n "$f" ]]; then run_tool 'MFTECmd ($MFT)' mftecmd -f "$f" --csv "$OUT/MFTECmd"
 else skip 'MFTECmd: no $MFT at the source root'; fi
 
-f="$(first_file 2 '$Extend/$J')"; [[ -n "$f" ]] || f="$(first_file 1 '$J')"
+# $J is often exported with escaped names, e.g. $UsnJrnl%3A$J
+f="$(first_file 2 '$Extend/$J')"
+[[ -n "$f" ]] || f="$(first_file 2 '$Extend/$UsnJrnl*$J')"
+[[ -n "$f" ]] || f="$(first_file 1 '$J')"
 if [[ -n "$f" ]]; then run_tool 'MFTECmd ($J)' mftecmd -f "$f" --csv "$OUT/MFTECmd"
 else skip 'MFTECmd: no $J ($Extend\$J)'; fi
+
+f="$(first_file 1 '$Boot')"
+if [[ -n "$f" ]]; then run_tool 'MFTECmd ($Boot)' mftecmd -f "$f" --csv "$OUT/MFTECmd"
+else skip 'MFTECmd: no $Boot at the source root'; fi
 
 d="$(first_dir 4 'Windows/System32/winevt/Logs')"
 if [[ -n "$d" ]]; then run_tool 'EvtxECmd (event logs)' evtxecmd -d "$d" --csv "$OUT/EvtxECmd"
@@ -91,6 +98,15 @@ d="$(first_dir 3 'Windows/System32/config')"
 if [[ -n "$d" && -n "$batch" ]]; then
   run_tool 'RECmd (system hives)' recmd -d "$d" --bn "$batch" --csv "$OUT/RECmd"
 elif [[ -n "$batch" ]]; then skip 'RECmd: no Windows\System32\config'; fi
+
+# service account hives (LocalService, NetworkService, ...)
+if [[ -n "$batch" ]]; then
+  while IFS= read -r sphive; do
+    spname="$(basename "$(dirname "$sphive")")"
+    run_tool "RECmd (NTUSER.DAT, service $spname)" \
+      recmd -f "$sphive" --bn "$batch" --csv "$OUT/RECmd/ServiceProfiles_$spname"
+  done < <(find "$SRC" -maxdepth 3 -type f -ipath "$SRC/Windows/ServiceProfiles/*/ntuser.dat" 2>/dev/null)
+fi
 
 f="$(first_file 4 'Windows/System32/sru/SRUDB.dat')"
 if [[ -n "$f" ]]; then
@@ -122,6 +138,17 @@ if [[ -n "$users_dir" ]]; then
       run_tool "LECmd (lnk, user $uname)" lecmd -d "$recent" --csv "$OUT/LECmd/$uname" -q
       run_tool "JLECmd (jump lists, user $uname)" jlecmd -d "$recent" --csv "$OUT/JLECmd/$uname" -q
     fi
+    desktop="$(find "$u" -maxdepth 1 -type d -iname 'Desktop' -print -quit 2>/dev/null)"
+    if [[ -n "$desktop" ]] && find "$desktop" -maxdepth 1 -iname '*.lnk' -print -quit 2>/dev/null | grep -q .; then
+      run_tool "LECmd (desktop lnk, user $uname)" lecmd -d "$desktop" --csv "$OUT/LECmd/${uname}_desktop" -q
+    fi
+    for browser in 'AppData/Local/Google/Chrome/User Data' \
+                   'AppData/Local/Microsoft/Edge/User Data' \
+                   'AppData/Roaming/Mozilla/Firefox/Profiles'; do
+      bdir="$(find "$u" -maxdepth 6 -type d -ipath "*/${browser}" -print -quit 2>/dev/null)"
+      [[ -n "$bdir" ]] && run_tool "SQLECmd ($(basename "$(dirname "$bdir")"), user $uname)" \
+        sqlecmd -d "$bdir" --csv "$OUT/SQLECmd/$uname"
+    done
     while IFS= read -r acdb; do
       run_tool "WxTCmd (timeline, user $uname)" wxtcmd -f "$acdb" --csv "$OUT/WxTCmd/$uname"
     done < <(find "$u" -maxdepth 7 -type f -iname 'ActivitiesCache.db' -ipath '*connecteddevicesplatform*' 2>/dev/null)
@@ -149,7 +176,8 @@ if [[ "$MAKE_DB" == 1 ]]; then
     base="$(basename "$csv" .csv)"
     tbl="$(printf '%s' "$base" | sed -E 's/^[0-9]{8,}_//' \
       | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '_' \
-      | sed -E 's/_+/_/g; s/^_//; s/_$//; s/^([0-9])/t_\1/')"
+      | sed -E 's/_+/_/g; s/^_//; s/_$//; s/^([0-9])/t_\1/;
+                s/_[0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12}$//')"
     [[ -n "$tbl" ]] || tbl="table_$imported"
     if [[ -n "$(sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name='$tbl'" 2>/dev/null)" ]]; then
       # same output type from another run/user: append, skipping the header row
