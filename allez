@@ -85,12 +85,12 @@ sys_hive="$(first_file 4 'Windows/System32/config/SYSTEM')"
 if [[ -n "$sys_hive" ]]; then run_tool 'AppCompatCacheParser (shimcache)' appcompatcacheparser -f "$sys_hive" --csv "$OUT/AppCompatCacheParser"
 else skip 'AppCompatCacheParser: no SYSTEM hive'; fi
 
+batch="$(recmd_batch)"
+[[ -n "$batch" ]] || skip 'RECmd: no batch file found under RECmd/BatchExamples'
 d="$(first_dir 3 'Windows/System32/config')"
-if [[ -n "$d" ]]; then
-  batch="$(recmd_batch)"
-  if [[ -n "$batch" ]]; then run_tool 'RECmd (system hives)' recmd -d "$d" --bn "$batch" --csv "$OUT/RECmd"
-  else skip 'RECmd: no batch file found under RECmd/BatchExamples'; fi
-else skip 'RECmd: no Windows\System32\config'; fi
+if [[ -n "$d" && -n "$batch" ]]; then
+  run_tool 'RECmd (system hives)' recmd -d "$d" --bn "$batch" --csv "$OUT/RECmd"
+elif [[ -n "$batch" ]]; then skip 'RECmd: no Windows\System32\config'; fi
 
 f="$(first_file 4 'Windows/System32/sru/SRUDB.dat')"
 if [[ -n "$f" ]]; then
@@ -125,6 +125,14 @@ if [[ -n "$users_dir" ]]; then
     while IFS= read -r acdb; do
       run_tool "WxTCmd (timeline, user $uname)" wxtcmd -f "$acdb" --csv "$OUT/WxTCmd/$uname"
     done < <(find "$u" -maxdepth 7 -type f -iname 'ActivitiesCache.db' -ipath '*connecteddevicesplatform*' 2>/dev/null)
+    if [[ -n "$batch" ]]; then
+      ntuser="$(find "$u" -maxdepth 1 -type f -iname 'NTUSER.DAT' -print -quit 2>/dev/null)"
+      [[ -n "$ntuser" ]] && run_tool "RECmd (NTUSER.DAT, user $uname)" \
+        recmd -f "$ntuser" --bn "$batch" --csv "$OUT/RECmd/$uname"
+      usrclass="$(find "$u" -maxdepth 6 -type f -ipath '*/appdata/local/microsoft/windows/usrclass.dat' -print -quit 2>/dev/null)"
+      [[ -n "$usrclass" ]] && run_tool "RECmd (UsrClass.dat, user $uname)" \
+        recmd -f "$usrclass" --bn "$batch" --csv "$OUT/RECmd/$uname"
+    fi
   done
   run_tool 'SBECmd (shellbags, all users)' sbecmd -d "$users_dir" --csv "$OUT/SBECmd"
 else
