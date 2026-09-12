@@ -80,6 +80,12 @@ f="$(first_file 1 '$Boot')"
 if [[ -n "$f" ]]; then run_tool 'MFTECmd ($Boot)' mftecmd -f "$f" --csv "$OUT/MFTECmd"
 else skip 'MFTECmd: no $Boot at the source root'; fi
 
+# $SDS is exported under names like $Secure_$SDS
+f="$(first_file 1 '$SDS')"
+[[ -n "$f" ]] || f="$(first_file 2 '$Secure?$SDS')"
+if [[ -n "$f" ]]; then run_tool 'MFTECmd ($SDS)' mftecmd -f "$f" --csv "$OUT/MFTECmd"
+else skip 'MFTECmd: no $SDS ($Secure)'; fi
+
 d="$(first_dir 4 'Windows/System32/winevt/Logs')"
 if [[ -n "$d" ]]; then run_tool 'EvtxECmd (event logs)' evtxecmd -d "$d" --csv "$OUT/EvtxECmd"
 else skip 'EvtxECmd: no Windows\System32\winevt\Logs'; fi
@@ -103,13 +109,28 @@ if [[ -n "$d" && -n "$batch" ]]; then
   run_tool 'RECmd (system hives)' recmd -d "$d" --bn "$batch" --csv "$OUT/RECmd"
 elif [[ -n "$batch" ]]; then skip 'RECmd: no Windows\System32\config'; fi
 
-# service account hives (LocalService, NetworkService, ...)
-if [[ -n "$batch" ]]; then
-  while IFS= read -r sphive; do
-    spname="$(basename "$(dirname "$sphive")")"
-    run_tool "RECmd (NTUSER.DAT, service $spname)" \
-      recmd -f "$sphive" --bn "$batch" --csv "$OUT/RECmd/ServiceProfiles_$spname"
-  done < <(find "$SRC" -maxdepth 3 -type f -ipath "$SRC/Windows/ServiceProfiles/*/ntuser.dat" 2>/dev/null)
+# service account profiles (LocalService, NetworkService, custom services)
+sproot="$(first_dir 2 'Windows/ServiceProfiles')"
+if [[ -n "$sproot" ]]; then
+  for sp in "$sproot"/*/; do
+    [[ -d "$sp" ]] || continue
+    spname="$(basename "$sp")"
+    spnt="$(find "$sp" -maxdepth 1 -type f -iname 'ntuser.dat' -print -quit 2>/dev/null)"
+    spuc="$(find "$sp" -maxdepth 6 -type f -ipath '*/appdata/local/microsoft/windows/usrclass.dat' -print -quit 2>/dev/null)"
+    if [[ -n "$batch" ]]; then
+      [[ -n "$spnt" ]] && run_tool "RECmd (NTUSER.DAT, service $spname)" \
+        recmd -f "$spnt" --bn "$batch" --csv "$OUT/RECmd/ServiceProfiles_$spname"
+      [[ -n "$spuc" ]] && run_tool "RECmd (UsrClass.dat, service $spname)" \
+        recmd -f "$spuc" --bn "$batch" --csv "$OUT/RECmd/ServiceProfiles_$spname"
+    fi
+    if [[ "$EXTENDED" != 1 && ( -n "$spnt" || -n "$spuc" ) ]]; then
+      hs="$OUT/.hives/$spname"; mkdir -p "$hs"
+      [[ -n "$spnt" ]] && find "$(dirname "$spnt")" -maxdepth 1 -iname 'ntuser.dat*' \
+        -exec cp {} "$hs/" \; 2>/dev/null
+      [[ -n "$spuc" ]] && find "$(dirname "$spuc")" -maxdepth 1 -iname 'usrclass.dat*' \
+        -exec cp {} "$hs/" \; 2>/dev/null
+    fi
+  done
 fi
 
 f="$(first_file 4 'Windows/System32/sru/SRUDB.dat')"
@@ -199,17 +220,23 @@ if [[ -n "$users_dir" ]]; then
         -exec cp {} "$hs/" \; 2>/dev/null
     fi
   done
-  if [[ "$EXTENDED" == 1 ]]; then
-    run_tool 'SBECmd (shellbags, full Users scan)' sbecmd -d "$users_dir" --csv "$OUT/SBECmd"
-  elif [[ -d "$OUT/.hives" ]]; then
-    run_tool 'SBECmd (shellbags, staged hives)' sbecmd -d "$OUT/.hives" --csv "$OUT/SBECmd"
-    rm -rf "$OUT/.hives"
-  else
-    skip 'SBECmd: no user hives found'
-  fi
   [[ "$EXTENDED" == 1 ]] || skip 'full app-data sweep (Packages, browser profile dirs, whole-Users scan): rerun with -e'
 else
-  skip 'user artifacts (LECmd/JLECmd/WxTCmd/SBECmd): no Users folder'
+  skip 'user artifacts (LECmd/JLECmd/WxTCmd): no Users folder'
+fi
+
+# shellbags: staged hive copies (users + service profiles) by default,
+# full directory scans with -e
+if [[ "$EXTENDED" == 1 ]]; then
+  [[ -n "$users_dir" ]] && run_tool 'SBECmd (shellbags, full Users scan)' \
+    sbecmd -d "$users_dir" --csv "$OUT/SBECmd"
+  [[ -n "$sproot" ]] && run_tool 'SBECmd (shellbags, service profiles)' \
+    sbecmd -d "$sproot" --csv "$OUT/SBECmd"
+elif [[ -d "$OUT/.hives" ]]; then
+  run_tool 'SBECmd (shellbags, staged hives)' sbecmd -d "$OUT/.hives" --csv "$OUT/SBECmd"
+  rm -rf "$OUT/.hives"
+else
+  skip 'SBECmd: no user or service hives found'
 fi
 
 # --- build the database --------------------------------------------------
@@ -234,6 +261,33 @@ if [[ "$MAKE_DB" == 1 ]]; then
       else warn "import failed: $base"; fi
     fi
   done < <(find "$OUT" -type f -iname '*.csv' -print0)
+
+  # add a username column derived from each row's source path, so per-user
+  # filtering is WHERE username = '...' instead of path parsing
+  while IFS= read -r t; do
+    src=""
+    while IFS= read -r col; do
+      case "$(printf '%s' "$col" | tr '[:upper:]' '[:lower:]')" in
+        sourcefile|hivepath|sourcehive) src="$col"; break ;;
+      esac
+    done < <(sqlite3 "$db" "SELECT name FROM pragma_table_info('$t')")
+    [[ -n "$src" ]] || continue
+    norm="replace(\"$src\", char(92), '/')"
+    rest="CASE
+      WHEN instr(lower($norm), '/users/') > 0
+        THEN substr($norm, instr(lower($norm), '/users/') + 7)
+      WHEN instr(lower($norm), '/.hives/') > 0
+        THEN substr($norm, instr(lower($norm), '/.hives/') + 8)
+      WHEN instr(lower($norm), '/serviceprofiles/') > 0
+        THEN substr($norm, instr(lower($norm), '/serviceprofiles/') + 17)
+      END"
+    sqlite3 "$db" "ALTER TABLE \"$t\" ADD COLUMN username TEXT" 2>>"$LOG"
+    sqlite3 "$db" "UPDATE \"$t\" SET username = NULLIF(substr(($rest), 1,
+        CASE WHEN instr(($rest), '/') > 0 THEN instr(($rest), '/') - 1
+             ELSE length(($rest)) END), '')" 2>>"$LOG" \
+      || warn "username column failed for table $t"
+  done < <(sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table'" 2>/dev/null)
+
   log "Database: $db ($imported CSV files imported)"
   while IFS= read -r t; do
     log "  table $t: $(sqlite3 "$db" "SELECT COUNT(*) FROM \"$t\"") rows"
