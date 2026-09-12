@@ -127,6 +127,10 @@ d="$(first_dir 1 '$Recycle.Bin')"
 if [[ -n "$d" ]]; then run_tool 'RBCmd (recycle bin)' rbcmd -d "$d" --csv "$OUT/RBCmd" -q
 else skip 'RBCmd: no $Recycle.Bin'; fi
 
+d="$(first_dir 4 'ProgramData/Microsoft/Windows/Start Menu')"
+if [[ -n "$d" ]]; then run_tool 'LECmd (system start menu)' lecmd -d "$d" --csv "$OUT/LECmd/ProgramData_startmenu" -q
+else skip 'LECmd: no ProgramData\Microsoft\Windows\Start Menu'; fi
+
 # --- per-user artifacts --------------------------------------------------
 users_dir="$(first_dir 1 'Users')"
 if [[ -n "$users_dir" ]]; then
@@ -142,11 +146,21 @@ if [[ -n "$users_dir" ]]; then
     if [[ -n "$desktop" ]] && find "$desktop" -maxdepth 1 -iname '*.lnk' -print -quit 2>/dev/null | grep -q .; then
       run_tool "LECmd (desktop lnk, user $uname)" lecmd -d "$desktop" --csv "$OUT/LECmd/${uname}_desktop" -q
     fi
-    for browser in 'AppData/Local/Google/Chrome/User Data' \
-                   'AppData/Local/Microsoft/Edge/User Data' \
-                   'AppData/Roaming/Mozilla/Firefox/Profiles'; do
-      bdir="$(find "$u" -maxdepth 6 -type d -ipath "*/${browser}" -print -quit 2>/dev/null)"
-      [[ -n "$bdir" ]] && run_tool "SQLECmd ($(basename "$(dirname "$bdir")"), user $uname)" \
+    startmenu="$(find "$u" -maxdepth 6 -type d -ipath '*/appdata/roaming/microsoft/windows/start menu' -print -quit 2>/dev/null)"
+    [[ -n "$startmenu" ]] && run_tool "LECmd (start menu, user $uname)" \
+      lecmd -d "$startmenu" --csv "$OUT/LECmd/${uname}_startmenu" -q
+    # SQLite-based app data with SQLECmd maps (browsers, notifications, store apps)
+    for entry in 'Chrome:AppData/Local/Google/Chrome/User Data' \
+                 'Edge:AppData/Local/Microsoft/Edge/User Data' \
+                 'Brave:AppData/Local/BraveSoftware/Brave-Browser/User Data' \
+                 'Vivaldi:AppData/Local/Vivaldi/User Data' \
+                 'Opera:AppData/Roaming/Opera Software' \
+                 'Firefox:AppData/Roaming/Mozilla/Firefox/Profiles' \
+                 'Notifications:AppData/Local/Microsoft/Windows/Notifications' \
+                 'Packages:AppData/Local/Packages'; do
+      blabel="${entry%%:*}"; brel="${entry#*:}"
+      bdir="$(find "$u" -maxdepth 6 -type d -ipath "*/${brel}" -print -quit 2>/dev/null)"
+      [[ -n "$bdir" ]] && run_tool "SQLECmd ($blabel, user $uname)" \
         sqlecmd -d "$bdir" --csv "$OUT/SQLECmd/$uname"
     done
     while IFS= read -r acdb; do
